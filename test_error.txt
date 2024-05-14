@@ -1,0 +1,7 @@
+Error in .External2(C_X11, paste0("png::", filename), g$width, g$height,  : 
+  unable to start device PNG
+Calls: png
+In addition: Warning message:
+In png(output_full_filepath, width = plot_width, height = plot_height,  :
+  could not open PNG file '/data/biol-micro-genomics/kell7366/kmer_gwes/'
+Execution halted
