@@ -1,0 +1,47 @@
+unitig_distance | MIT License | Copyright (c) 2020-2022 Juri Kuronen
+
+Using following arguments:
+  --edges-file                 sccmec.edges
+  --graphs-one-based           FALSE
+  --unitigs-file               sccmec.unitigs
+  --k-mer-length               61
+  --sgg-paths-file             sccmec.paths
+  --run-sggs-only              TRUE
+  --queries-file               sccmec.filtered_ge005maf_le015gf_gt01-lt05states.L349641n100.spydrpick_couplings.1-based.50212557edges
+  --queries-one-based          TRUE
+  --n-queries                  ALL
+  --queries-format             AUTOM
+  --max-distance               INF
+  --output-stem                sccmec
+  --output-one-based           FALSE
+  --threads                    8
+
+Operating mode: CDBG_AND_SGGS
+
+[ 5.011s] Reading queries with format: v w distance flag score.
+[44.550s] Read 50 212 557 lines from queries file in 39.538s.
+[44.550s] Set up outlier tools in 0.000s.
+[ 1m  4s] Prepared 150 276 search jobs in 19.587s.
+[ 1m  5s] Constructed main graph in 1.018s. Graph has 519 343 connected (half) nodes and 696 421 edges. Avg and max degree are 2.68 and 8.
+[ 1m  5s] Calculating distances in the single genome graphs.
+[ 2m 52s] Constructing single genome graphs 1 - 24 / 100 took 2.712s.
+[ 3m 42s] Calculating distances in the single genome graphs 1 - 24 / 100 took 2m 34s.
+[ 3m 42s] Deconstructing single genome graphs 1 - 24 / 100 took 0.032s.
+[ 5m  0s] Constructing single genome graphs 25 - 48 / 100 took 2.630s.
+[ 5m 48s] Calculating distances in the single genome graphs 25 - 48 / 100 took 2m 2s.
+[ 5m 48s] Deconstructing single genome graphs 25 - 48 / 100 took 0.035s.
+[ 7m 43s] Constructing single genome graphs 49 - 72 / 100 took 2.731s.
+[ 8m 30s] Calculating distances in the single genome graphs 49 - 72 / 100 took 2m 39s.
+[ 8m 30s] Deconstructing single genome graphs 49 - 72 / 100 took 0.031s.
+[10m 17s] Constructing single genome graphs 73 - 96 / 100 took 2.679s.
+[10m 46s] Calculating distances in the single genome graphs 73 - 96 / 100 took 2m 12s.
+[10m 46s] Deconstructing single genome graphs 73 - 96 / 100 took 0.039s.
+[10m 46s] Constructing single genome graphs 97 - 100 / 100 took 0.502s.
+[11m  0s] Calculating distances in the single genome graphs 97 - 100 / 100 took 13.851s.
+[11m  0s] Deconstructing single genome graphs and distances 97 - 100 / 100 took 0.002s.
+[11m  0s] Constructing 100 single genome graphs took 11.256s.
+[11m  0s] The compressed single genome graphs have on average 429 connected nodes and 575 edges.
+[11m  0s] Calculating distances in the 100 single genome graphs took 9m 43s.
+[11m  0s] Deconstructing 100 single genome graphs took 0.141s.
+[12m 32s] Output single genome graph mean distances to file sccmec.ud_sgg_0_based in 1m 31s.
+[12m 32s] Finished.
