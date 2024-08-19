@@ -6,7 +6,7 @@ from Bio import Phylo, SeqIO
 import csv
 import argparse
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 def likelihood(params, site1, site2, root1, root2, edgeLengths):
     if len(params) != 5:
@@ -16,76 +16,59 @@ def likelihood(params, site1, site2, root1, root2, edgeLengths):
     # Convert parameters to float
     a1, a2, b1, b2, eps = map(float, params)
 
-    Q0 = np.array([
-        [0, a1, b1, 0], 
-        [a2, 0, 0, b1 * eps], 
-        [b2, 0, 0, a1 * eps], 
-        [0, b2 / eps, a2 / eps, 0]
+    Q = np.array([
+        [-(a1+b1), a1, b1, 0], 
+        [a2, -(a2+b1*eps), 0, b1*eps], 
+        [b2, 0, -(b2+a1*eps), a1*eps], 
+        [0, b2/eps, a2/eps, -(b2/eps+a2/eps)]
     ])
+
+    Q2 = np.dot(Q, Q)
+    Q3 = np.dot(Q2, Q)
     
-    Q = Q0 - np.diag(np.sum(Q0, axis=1))
-
-    combined = expm(Q * 3) 
-
+    # Define the mapping matrix
     map_ = np.array([
-        [0, 1, 2, 3], 
-        [4, 5, 6, 7], 
-        [8, 9, 10, 11], 
-        [12, 13, 14, 15]
-    ]).flatten()
-    
-    combined = np.array([map_[site1[i] * 4 + site2[i]] for i in range(len(site1))])
+        [0,8,2,10], 
+        [4,12,6,14], 
+        [1,9,3,11], 
+        [5,13,7,15]
+    ])
 
     Id = np.diag([1, 1, 1, 1])
+    
+    ret = -1e-10
+    
+    epsilon = 1e-10  # Small constant to ensure numerical stability
 
-    den = a1 * b1 * eps * eps + a1 * b2 + a2 * b1 + a2 * b2
-    if den <= 0:
-        print(f"Denominator became non-positive with params: {params}")
-        return -1e10  # Return a large negative number to signal an error
+    # Ensure combined is a NumPy array for efficient indexing
+    combined = np.array([map_[site1[i], site2[i]] for i in range(len(site1))])
+    
+    # Calculate the power terms for edgeLengths
+    edgeLengths_squared = edgeLengths**2
+    edgeLengths_cubed = edgeLengths**3
 
-    if root1 == 1 and root2 == 1:
-        num = a2 * b2
-    elif root1 == 1 and root2 == 2:
-        num = a2 * b1
-    elif root1 == 2 and root2 == 1:
-        num = a1 * b2
-    elif root1 == 2 and root2 == 2:
-        num = a1 * b1 * eps * eps
-
-    if num <= 0:
-        print(f"Numerator became non-positive with params: {params}")
-        return -1e10  # Return a large negative number to signal an error
-
-    ret = np.log(num / den)
-    if np.isnan(ret) or np.isinf(ret):
-        print(f"Log result became NaN or infinite with params: {params}, num: {num}, den: {den}")
-        return -1e10  # Return a large negative number to signal an error
-
-    for idx, P in enumerate(combined):
-        P_sum = np.sum(Id + P + 1)
-        if P_sum <= 0:
-            print(f"Log argument became non-positive with params: {params}, P: {P}, Id: {Id}")
-            return -1e10  # Return a large negative number to signal an error
-        log_sum = np.log(Id + P + 1)
-        if np.isnan(log_sum).any() or np.isinf(log_sum).any():
+    # Calculate log sum terms using vectorized operations
+    log_sum_terms = (
+        Id.flatten()[combined]
+        + Q.flatten()[combined] * edgeLengths
+        + Q2.flatten()[combined] * edgeLengths_squared / 2
+        + Q3.flatten()[combined] * edgeLengths_cubed / 6
+        + epsilon
+    )
+    
+    # Accumulate the log values
+    ret += np.sum(np.log(log_sum_terms))
         
-            print(f"Log result became NaN or infinite with params: {params}, P:{P}, Id: {Id}, log_sum: {log_sum}")
-            return -1e10  # Return a large negative number to signal an error
-        ret += np.sum(log_sum)
-
-    if np.isnan(ret) or np.isinf(ret):
-        print(f"Final result became NaN or infinite with params: {params}")
-        ret = -1e10
     return -ret
-
+    
 def likelihood0(params, site1, site2, root1, root2, edgeLengths):
     if len(params) != 4:
         print(f"Error in likelihood0: expected 4 parameters but got {len(params)}: {params}")
-        return -1e10  # Return a large negative number to signal an error
-    # Convert params to list and append 1, then call likelihood
+        return -1e10  
+        
     augmented_params = list(params) + [1]
     return likelihood(augmented_params, site1, site2, root1, root2, edgeLengths)
-    
+
 #Read the tree file and get the edges name and lengths
 def get_edges_lengths(tree, seq_dict):
     edges = []
@@ -94,128 +77,61 @@ def get_edges_lengths(tree, seq_dict):
         for child in clade.clades:
             if clade.name in seq_dict and child.name in seq_dict:
                 edges.append((seq_dict[clade.name], seq_dict[child.name]))
-                edge_lengths.append(child.branch_length if child.branch_length is not None else 1e-7)
+                
+                # Add branch length 1e-7 if it's None or 0
+                if child.branch_length is None or child.branch_length == 0:
+                    edge_lengths.append(1e-7)
+                else:
+                    edge_lengths.append(child.branch_length)
+                    
     return edges, edge_lengths
 
-def process_mutation_types(seqs, edges, i):
-    muts = np.zeros((len(edges)), dtype=bool)
-    for b in range(len(edges)):
-        parent_base = seqs[edges[b, 0]].seq[i].lower()
-        child_base = seqs[edges[b, 1]].seq[i].lower()
-        if parent_base != child_base:
-            muts[b] = True
-    return muts
-
-def determine_mutation_type(seqs, edges, i):
-    mutsTyp = np.zeros((len(edges)), dtype=int)
-    for b in range(len(edges)):
-        if edges[b, 0] >= len(seqs) or edges[b, 1] >= len(seqs):
-            continue
-        parent_base = seqs[edges[b, 0]].seq[i].lower()
-        child_base = seqs[edges[b, 1]].seq[i].lower()
-        
-        if parent_base == 'a' and child_base == 'a':
-            mutsTyp[b] = 0
-        elif parent_base == 'a' and child_base == 'c':
-            mutsTyp[b] = 1
-        elif parent_base == 'c' and child_base == 'a':
-            mutsTyp[b] = 2
-        elif parent_base == 'c' and child_base == 'c':
-            mutsTyp[b] = 3
-    return mutsTyp
-
-def main(treefile, sequencefile, output_dir, num_threads):
-    
-    print(f"Process starts with CPU number of {num_threads}")
-    
-    print("Reading tree and sequences...")
-    tree = Phylo.read(treefile, 'newick')
-    seqs = list(SeqIO.parse(sequencefile, 'fasta'))
-
-    labs = [seq.id for seq in seqs]
-    print(f"Number of sequences: {len(seqs)}")
-    
-    # Create a dictionary to map sequence IDs to their indices
-    seq_dict = {seq.id: idx for idx, seq in enumerate(seqs)}
-    print(f"Sequence dictionary: {seq_dict}")
-    
-    edges, edge_lengths = get_edges_lengths(tree, seq_dict)
-    edges = np.array(edges)
-    edge_lengths = np.array(edge_lengths)
-    print(f"Number of edges: {len(edges)}")
-    print(f"Edges: {edges}")
-    print(f"Edge lengths: {edge_lengths}")
-
-    if len(edges) == 0:
-        print("No valid edges found. Exiting.")
-        return
-
-    l = len(seqs[0].seq)
-    print(f"Sequence length: {l}")
-    
-    mut_file= os.path.join(output_dir, 'mut.txt')
-    mut_types_file = os.path.join(output_dir, 'mut_type.txt')
-    
-    # Load or compute mutation types
-    if os.path.exists(str(mut_file)+".npy") and os.path.exists(str(mut_types_file)+".npy"):
-        print(f"Loading mutation types from {mut_file} and {mut_types_file}...")
-        muts = np.load(str(mut_file)+".npy")
-        mutsTyp = np.load(str(mut_types_file)+".npy")
-        print("Loading finished")
-
-    else:
-        print("Computing mutation types...")
-        muts = np.zeros((l, len(edges)), dtype=bool)
-        mutsTyp = np.zeros((l, len(edges)), dtype=int)
-
-        with ThreadPoolExecutor(max_workers=num_threads) as executor:
-            futures = {executor.submit(process_mutation_types, seqs, edges, i): i for i in range(l)}
-            for future in as_completed(futures):
-                i = futures[future]
-                muts[i] = future.result()
-                if i % 1000 == 0:
-                    print(f"Processed site {i+1} of {l} for mutations")
-
-            futures = {executor.submit(determine_mutation_type, seqs, edges, i): i for i in range(l)}
-            for future in as_completed(futures):
-                i = futures[future]
-                mutsTyp[i] = future.result()
-                if i % 100 == 0:
-                    print(f"Processed site {i+1} of {l} for mutation types")
-
-        np.save(mut_file, muts)
-        np.save(mut_types_file, mutsTyp)
-    
-    print("Calculating scores...")
-
+def process_site(i, npat, muts, edges, mutsTyp, edge_lengths, store, seq_matrix, seq_count):
     results = []
-    s = 0
     tab = np.zeros((2, 2))
-    npat = mutsTyp.shape[0]
-    store = np.ones(200 * 200 * 200)
 
-    def process_site_pair(i, j):
-        site_results = []
+    col_indices = np.where(muts[i, :])[0]
+    muts_subset = muts[i:npat, col_indices]
+    col_sums = np.sum(muts_subset, axis=1)
+    
+    # Find columns where row_sums >= 4
+    w = np.where(col_sums >= 4)[0] + i
+    w = w[w != i]
+    
+    # Update the bounds for each parameter
+    param_bound = [(1e-5, None)] * 4 + [(1.0, None)]
+    
+    print(f"for i: {i}, w: {w}")
+    
+    for j in w:
+        print(f"Processing site {i} and {j}...")
+        seq_mult = np.dot(seq_matrix[:, i], seq_matrix[:, j])
+        coex_per = seq_mult / seq_count
+        if coex_per < -0.10:
+            continue
+        print(f"co-existance value : {coex_per}")
         m = muts[i, :] * 2 + muts[j, :]
         tab[0, 0] = np.sum(m == 3)
         tab[0, 1] = np.sum(m == 1)
         tab[1, 0] = np.sum(m == 2)
         tab[1, 1] = np.sum(m == 0)
         if tab[0, 0] > 199 or tab[0, 1] > 199 or tab[1, 0] > 199:
-            score = round(np.log10(fisher_exact(tab)[1]))
+            score = round(np.log10(fisher_exact(tab)[1]),2)
         else:
             ind = int(tab[0, 0] * 40000 + tab[0, 1] * 200 + tab[1, 0])
             if store[ind] == 1:
-                store[ind] = round(np.log10(fisher_exact(tab)[1]))
+                store[ind] = round(np.log10(fisher_exact(tab)[1]),2)
             score = store[ind]
+
 
         site1 = mutsTyp[i, :]
         site2 = mutsTyp[j, :]
-
+        
         root_candidates = set(edges[:, 0]) - set(edges[:, 1])
-        if not root_candidates:
-            return site_results
 
+        if not root_candidates:
+            continue
+        
         root = list(root_candidates)[0]
         bra = np.where(edges[:, 0] == root)[0][0]
 
@@ -231,46 +147,133 @@ def main(treefile, sequencefile, output_dir, num_threads):
         score2 = 0
 
         try:
-            fit0 = minimize(lambda params: likelihood0(params, site1, site2, root1, root2, edge_lengths), x0=[1, 1, 1, 1], method='L-BFGS-B', bounds=[(1e-8, 10.0)] * 4)
-            fit = minimize(lambda params: likelihood(params, site1, site2, root1, root2, edge_lengths), x0=[fit0.x[0], fit0.x[1], fit0.x[2], fit0.x[3], 1], method='L-BFGS-B', bounds=[(1e-8, 10.0)] * 5)
+            fit0 = minimize(lambda params: likelihood0(params, site1, site2, root1, root2, edge_lengths), x0=[1, 1, 1, 1], method='L-BFGS-B', bounds=[(1e-5, None)] * 4)
+            fit = minimize(lambda params: likelihood(params, site1, site2, root1, root2, edge_lengths), x0=[fit0.x[0], fit0.x[1], fit0.x[2], fit0.x[3], 1], method='L-BFGS-B', bounds=param_bound)
             lrt = 2 * (-fit.fun + fit0.fun)
+            print(f"first model : {fit0.fun}, second model : {fit.fun} with eps : {fit.x[4]}, and lrt : {lrt}")
             if lrt < 0:
+                print(f"Negative LRT value: {lrt}, setting to 0")
                 lrt = 0  # To handle cases where lrt is negative due to numerical issues
             p_value = chi2.sf(lrt, df=1)
             if p_value <= 0:
                 p_value = np.finfo(float).tiny  # Smallest positive float to avoid log10(0)
-            score2 = round(np.log10(p_value))
+            score2 = round(np.log10(p_value), 2)
         except Exception as e:
-            print(f"Error optimizing likelihood for positions {i} and {j}: {e}")
-            return site_results
+            continue
+            
+        if score <= -10 or score2 <= -3: #p-value < 0.01
+            results.append([i, j, tab[0, 0], tab[0, 1], tab[1, 0], tab[1, 1], score, score2])
+            print(f"results appended for {i} and {j}. New results: {[i, j, tab[0, 0], tab[0, 1], tab[1, 0], tab[1, 1], score, score2]}")
 
-        if score <= -10 or score2 <= -10:
-            site_results.append([i, j, tab[0, 0], tab[0, 1], tab[1, 0], tab[1, 1], score, score2])
+    return results
 
-        return site_results
+def main(treefile, sequencefile, output_dir, num_threads):
+    print("Reading tree and sequences...")
+    tree = Phylo.read(treefile, 'newick')
+    seqs = list(SeqIO.parse(sequencefile, 'fasta'))
 
-    with ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = []
-        for i in range(npat):
+    labs = [seq.id for seq in seqs]
+    print(f"Number of sequences: {len(seqs)}")
+    
+    # Create a dictionary to map sequence IDs to their indices
+    seq_dict = {seq.id: idx for idx, seq in enumerate(seqs)}
+    
+    edges, edge_lengths = get_edges_lengths(tree, seq_dict)
+    edges = np.array(edges)
+    edge_lengths = np.array(edge_lengths)
+    print(f"Number of edges: {len(edges)}")
+    
+    if len(edges) == 0:
+        print("No valid edges found. Exiting.")
+        return
+
+    l = len(seqs[0].seq)
+    print(f"Sequence length: {l}")
+    
+    mut_file = os.path.join(output_dir, 'mut.txt')
+    mut_types_file = os.path.join(output_dir, 'mut_type.txt')
+    
+    # Load or compute mutation types
+    if os.path.exists(str(mut_file) + ".npy") and os.path.exists(str(mut_types_file) + ".npy"):
+        print(f"Loading mutation types from {mut_file} and {mut_types_file}...")
+        muts = np.load(str(mut_file) + ".npy")
+        mutsTyp = np.load(str(mut_types_file) + ".npy")
+        print("Loading finished")
+    else:
+        print("Computing mutation types...")
+        muts = np.zeros((l, len(edges)), dtype=bool)
+        
+        for i in range(l):
             if i % 1000 == 0:
-                print(f"Processing site {i+1} of {npat}...")
-            col_indices = np.where(muts[i, :])[0]
-            muts_subset = muts[i:npat, col_indices]
-            row_sums = np.sum(muts_subset, axis=0)
-            w = np.where(row_sums >= 4)[0]
-            original_w = col_indices[w]
-            print(f"w = {original_w}")
-            for j in original_w:
-                print(f"comparing sites {i} and {j}")
-                futures.append(executor.submit(process_site_pair, i, j))
+                print(f"Processing site {i+1} of {l}...")
+        
+            for b in range(len(edges)):
+                parent_base = seqs[edges[b, 0]].seq[i].lower()
+                child_base = seqs[edges[b, 1]].seq[i].lower()
+                if parent_base != child_base:
+                    muts[i, b] = True
 
+        print("Determining types of mutations...")
+        mutsTyp = np.zeros((l, len(edges)), dtype=int)
+        for i in range(l):
+            if i % 100 == 0:
+                print(f"Processing site {i+1} of {l}...")
+        
+            for b in range(len(edges)):
+                if edges[b, 0] >= len(seqs) or edges[b, 1] >= len(seqs):
+                    continue
+                parent_base = seqs[edges[b, 0]].seq[i].lower()
+                child_base = seqs[edges[b, 1]].seq[i].lower()
+        
+                if parent_base == 'a' and child_base == 'a':
+                    mutsTyp[i, b] = 0
+                elif parent_base == 'a' and child_base == 'c':
+                    mutsTyp[i, b] = 1
+                elif parent_base == 'c' and child_base == 'a':
+                    mutsTyp[i, b] = 2
+                elif parent_base == 'c' and child_base == 'c':
+                    mutsTyp[i, b] = 3
+
+        print("Mutation type determination completed.")
+        np.save(mut_file, muts)
+        np.save(mut_types_file, mutsTyp)
+    
+    # Create sequence matrix
+    print("Generating sequence matrix...")
+    seq_matrix = np.zeros((len(seqs), l))
+    for idx, seq in enumerate(seqs):
+        seq_matrix[idx] = [1 if base.lower() == 'c' else -1 for base in seq.seq]
+    
+    print("Calculating scores...")
+    
+    # Debugging prints after calculating scores
+    print(f"Edges: {edges[1:10,]}")
+    print(f"Edge lengths: {edge_lengths}")
+    print(f"Mutation types shape: {mutsTyp.shape}")
+    print(f"Mutation types: {mutsTyp[:3]}")  # Print first 5 mutation types for inspection
+    print(f"Mutations shape: {muts.shape}")
+    print(f"Mutations: {muts[:3]}")  # Print first 5 mutations for inspection
+
+    seq_count = len(edges)
+    results = []
+    s = 0
+    npat = mutsTyp.shape[0]
+    store = np.ones(200 * 200 * 200)
+    
+    with ProcessPoolExecutor(max_workers=num_threads) as executor:
+        futures = [executor.submit(process_site, i, npat, muts, edges, mutsTyp, edge_lengths, store, seq_matrix, seq_count) for i in range(npat)]
+        
         for future in as_completed(futures):
-            results.extend(future.result())
+            try:
+                result = future.result()
+                results.extend(result)
+            except Exception as e:
+                print(f"Exception occurred: {e}")
 
     print(f"Sorting and saving {len(results)} significant results...")
     results.sort(key=lambda x: (x[6], x[7]))  # Sorting by score and score2
 
-    output_file = os.path.join(output_dir, 'score.tsv')
+    output_file = os.path.join(output_dir, 'ctmc_score.tsv')
     with open(output_file, 'w', newline='') as fout:
         writer = csv.writer(fout, delimiter='\t')
         writer.writerow(['i', 'j', 'tab[1,1]', 'tab[1,2]', 'tab[2,1]', 'tab[2,2]', 'score', 'score2'])
@@ -283,8 +286,7 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--treefile', required=True, help='Path to the Newick tree file.')
     parser.add_argument('-s', '--sequencefile', required=True, help='Path to the sequence file in FASTA format.')
     parser.add_argument('-o', '--output_dir', required=True, help='Directory to save the output files.')
-    parser.add_argument('-T', '--threads', type=int, default=1, help='Number of threads for multithreading (default: 1).')
+    parser.add_argument('-T', '--threads', type=int, default=1, help='Number of threads to use (default: 1)')
 
     args = parser.parse_args()
     main(args.treefile, args.sequencefile, args.output_dir, args.threads)
-

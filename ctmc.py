@@ -15,66 +15,55 @@ def likelihood(params, site1, site2, root1, root2, edgeLengths):
     # Convert parameters to float
     a1, a2, b1, b2, eps = map(float, params)
 
-    Q0 = np.array([
-        [0, a1, b1, 0], 
-        [a2, 0, 0, b1 * eps], 
-        [b2, 0, 0, a1 * eps], 
-        [0, b2 / eps, a2 / eps, 0]
+    Q = np.array([
+        [-(a1+b1), a1, b1, 0], 
+        [a2, -(a2+b1*eps), 0, b1*eps], 
+        [b2, 0, -(b2+a1*eps), a1*eps], 
+        [0, b2/eps, a2/eps, -(b2/eps+a2/eps)]
     ])
+
+    Q2 = np.dot(Q, Q)
+    Q3 = np.dot(Q2, Q)
     
-    Q = Q0 - np.diag(np.sum(Q0, axis=1))
-
-    combined = expm(Q * 3) 
-
+    # Define the mapping matrix
     map_ = np.array([
-        [0, 1, 2, 3], 
-        [4, 5, 6, 7], 
-        [8, 9, 10, 11], 
-        [12, 13, 14, 15]
-    ]).flatten()
-    
-    combined = np.array([map_[site1[i] * 4 + site2[i]] for i in range(len(site1))])
+        [0,8,2,10], 
+        [4,12,6,14], 
+        [1,9,3,11], 
+        [5,13,7,15]
+    ])
 
     Id = np.diag([1, 1, 1, 1])
+    
+    ret = -1e-10
+    
+    epsilon = 1e-10  # Small constant to ensure numerical stability
 
-    den = a1 * b1 * eps * eps + a1 * b2 + a2 * b1 + a2 * b2
-    if den <= 0:
-        print(f"Denominator became non-positive with params: {params}")
-        return -1e10  # Return a large negative number to signal an error
+    # Ensure combined is a NumPy array for efficient indexing
+    combined = np.array([map_[site1[i], site2[i]] for i in range(len(site1))])
+    
+#    print(f"combined : {combined} Q.flatten()[combined] : {Q.flatten()[combined]}")
+    
+    # Calculate the power terms for edgeLengths
+    edgeLengths_squared = edgeLengths**2
+    edgeLengths_cubed = edgeLengths**3
+    
+#    print(f"Q shape : {Q.flatten()[combined]}, edge shape : {edgeLengths.shape}, edge : {edgeLengths}")
+    
+    # Calculate log sum terms using vectorized operations
+    log_sum_terms = (
+        Id.flatten()[combined]
+        + Q.flatten()[combined] * edgeLengths
+        + Q2.flatten()[combined] * edgeLengths_squared / 2
+        + Q3.flatten()[combined] * edgeLengths_cubed / 6
+        + epsilon
+    )
 
-    if root1 == 1 and root2 == 1:
-        num = a2 * b2
-    elif root1 == 1 and root2 == 2:
-        num = a2 * b1
-    elif root1 == 2 and root2 == 1:
-        num = a1 * b2
-    elif root1 == 2 and root2 == 2:
-        num = a1 * b1 * eps * eps
+#    print(f"log_sum = {np.log(log_sum_terms)}")
 
-    if num <= 0:
-        print(f"Numerator became non-positive with params: {params}")
-        return -1e10  # Return a large negative number to signal an error
-
-    ret = np.log(num / den)
-    if np.isnan(ret) or np.isinf(ret):
-        print(f"Log result became NaN or infinite with params: {params}, num: {num}, den: {den}")
-        return -1e10  # Return a large negative number to signal an error
-
-    for idx, P in enumerate(combined):
-        P_sum = np.sum(Id + P + 1)
-        if P_sum <= 0:
-            print(f"Log argument became non-positive with params: {params}, P: {P}, Id: {Id}")
-            return -1e10  # Return a large negative number to signal an error
-        log_sum = np.log(Id + P + 1)
-        if np.isnan(log_sum).any() or np.isinf(log_sum).any():
+    # Accumulate the log values
+    ret += np.sum(np.log(log_sum_terms))
         
-            print(f"Log result became NaN or infinite with params: {params}, P:{P}, Id: {Id}, log_sum: {log_sum}")
-            return -1e10  # Return a large negative number to signal an error
-        ret += np.sum(log_sum)
-
-    if np.isnan(ret) or np.isinf(ret):
-        print(f"Final result became NaN or infinite with params: {params}")
-        ret = -1e10
     return -ret
 
 def likelihood0(params, site1, site2, root1, root2, edgeLengths):
@@ -84,7 +73,7 @@ def likelihood0(params, site1, site2, root1, root2, edgeLengths):
     # Convert params to list and append 1, then call likelihood
     augmented_params = list(params) + [1]
     return likelihood(augmented_params, site1, site2, root1, root2, edgeLengths)
-    
+
 #Read the tree file and get the edges name and lengths
 def get_edges_lengths(tree, seq_dict):
     edges = []
@@ -93,8 +82,15 @@ def get_edges_lengths(tree, seq_dict):
         for child in clade.clades:
             if clade.name in seq_dict and child.name in seq_dict:
                 edges.append((seq_dict[clade.name], seq_dict[child.name]))
-                edge_lengths.append(child.branch_length if child.branch_length is not None else 1e-7)
+                
+                # Add branch length 1e-7 if it's None or 0
+                if child.branch_length is None or child.branch_length == 0:
+                    edge_lengths.append(1e-7)
+                else:
+                    edge_lengths.append(child.branch_length)
+                    
     return edges, edge_lengths
+    
 
 def main(treefile, sequencefile, output_dir):
     print("Reading tree and sequences...")
@@ -112,8 +108,8 @@ def main(treefile, sequencefile, output_dir):
     edges = np.array(edges)
     edge_lengths = np.array(edge_lengths)
     print(f"Number of edges: {len(edges)}")
-    print(f"Edges: {edges}")
-    print(f"Edge lengths: {edge_lengths}")
+    max_length = max(edge_lengths)
+    print(f"Max length: {max_length}")
 
     if len(edges) == 0:
         print("No valid edges found. Exiting.")
@@ -159,9 +155,9 @@ def main(treefile, sequencefile, output_dir):
         
                 if parent_base == 'a' and child_base == 'a':
                     mutsTyp[i, b] = 0
-                elif parent_base == 'a' and child_base == 'c':
-                    mutsTyp[i, b] = 1
                 elif parent_base == 'c' and child_base == 'a':
+                    mutsTyp[i, b] = 1
+                elif parent_base == 'a' and child_base == 'c':
                     mutsTyp[i, b] = 2
                 elif parent_base == 'c' and child_base == 'c':
                     mutsTyp[i, b] = 3
@@ -169,61 +165,74 @@ def main(treefile, sequencefile, output_dir):
         print("Mutation type determination completed.")
         np.save(mut_file, muts)
         np.save(mut_types_file, mutsTyp)
+        
+    # Create sequence matrix
+    seq_matrix = np.zeros((len(seqs), l))
+    for idx, seq in enumerate(seqs):
+        seq_matrix[idx] = [1 if base.lower() == 'c' else -1 for base in seq.seq]
 
     print("Calculating scores...")
     
     # Debugging prints after calculating scores
-    print(f"Edges: {edges}")
+    print(f"Edges: {edges[1:10,]}")
     print(f"Edge lengths: {edge_lengths}")
     print(f"Mutation types shape: {mutsTyp.shape}")
-    print(f"Mutation types: {mutsTyp[:5]}")  # Print first 5 mutation types for inspection
+    print(f"Mutation types: {mutsTyp[:5]}")
     print(f"Mutations shape: {muts.shape}")
-    print(f"Mutations: {muts[:5]}")  # Print first 5 mutations for inspection
+    print(f"Mutations: {muts[:5]}") 
 
+    seq_count = len(edges)
     results = []
     s = 0
     tab = np.zeros((2, 2))
     npat = mutsTyp.shape[0]
     store = np.ones(200 * 200 * 200)
+    
+    # Update the bounds for each parameter
+    param_bound = [(1e-5, None)] * 4 + [(1.0, None)]
+    
     for i in range(npat):
         if i % 1000 == 0:
             print(f"Processing site {i+1} of {npat}...")
         # Identify columns where muts[i, :] is True
         col_indices = np.where(muts[i, :])[0]
         
-        # Create the subset matrix
+            # Create the subset matrix
         muts_subset = muts[i:npat, col_indices]
         
         # Calculate the row sums
-        row_sums = np.sum(muts_subset, axis=0)
+        col_sums = np.sum(muts_subset, axis=1)
         
         # Find columns where row_sums >= 4
-        w = np.where(row_sums >= 4)[0]
+    
+        w = np.where(col_sums >= 4)[0] + i
+        w = w[w != i]
         
-        # Map w back to the original column indices
-        original_w = col_indices[w]
-        print(f"original_w is : {original_w}")
-        for j in original_w:
+        print(f"w: {w} and length: {len(w)}")
+        
+        for j in w:
+            print(f"Comparing sites {i} and {j}")
+            seq_mult = np.dot(seq_matrix[:, i], seq_matrix[:, j])
+            mi = seq_mult / seq_count
+            print(f"mi: {mi}")
+            if mi < 0.3:
+                print(f"skip as {round(mi,2)} < -0.1")
+                continue
             m = muts[i, :] * 2 + muts[j, :]
             tab[0, 0] = np.sum(m == 3)
             tab[0, 1] = np.sum(m == 1)
             tab[1, 0] = np.sum(m == 2)
             tab[1, 1] = np.sum(m == 0)
             if tab[0, 0] > 199 or tab[0, 1] > 199 or tab[1, 0] > 199:
-                print("I am here")
-                score = round(np.log10(fisher_exact(tab)[1]))
+                score = round(np.log10(fisher_exact(tab)[1]),2)
             else:
                 ind = int(tab[0, 0] * 40000 + tab[0, 1] * 200 + tab[1, 0])
                 if store[ind] == 1:
-                    store[ind] = round(np.log10(fisher_exact(tab)[1]))
+                    store[ind] = round(np.log10(fisher_exact(tab)[1]),2)
                 score = store[ind]
-
-            print(score)
 
             site1 = mutsTyp[i, :]
             site2 = mutsTyp[j, :]
-            
-            print(f"Comparing sites {i} and {j}")
             
             root_candidates = set(edges[:, 0]) - set(edges[:, 1])
 
@@ -244,27 +253,34 @@ def main(treefile, sequencefile, output_dir):
                 root2 = 2
 
             score2 = 0
+            
+#            print(f"site1: {site1}, site2: {site2}, root1: {root1}, root2:{root2} and edge_lengths: {edge_lengths}")
 
             try:
-                fit0 = minimize(lambda params: likelihood0(params, site1, site2, root1, root2, edge_lengths), x0=[1, 1, 1, 1], method='L-BFGS-B', bounds=[(1e-8, 10.0)] * 4)
-                fit = minimize(lambda params: likelihood(params, site1, site2, root1, root2, edge_lengths), x0=[fit0.x[0], fit0.x[1], fit0.x[2], fit0.x[3], 1], method='L-BFGS-B', bounds=[(1e-8, 10.0)] * 5)
+                fit0 = minimize(lambda params: likelihood0(params, site1, site2, root1, root2, edge_lengths), x0=[1, 1, 1, 1], method='L-BFGS-B', bounds=[(1e-5, None)] * 4)
+                fit = minimize(lambda params: likelihood(params, site1, site2, root1, root2, edge_lengths), x0=[fit0.x[0], fit0.x[1], fit0.x[2], fit0.x[3], 1], method='L-BFGS-B', bounds=param_bound)
                 lrt = 2 * (-fit.fun + fit0.fun)
+                print(f"first model : {fit0.fun}, second model : {fit.fun} with param : {fit.x[0],fit.x[1],fit.x[2],fit.x[3]} eps : {fit.x[4]}, and lrt : {lrt}")
                 if lrt < 0:
                     print(f"Negative LRT value: {lrt}, setting to 0")
                     lrt = 0  # To handle cases where lrt is negative due to numerical issues
                 p_value = chi2.sf(lrt, df=1)
+                
                 if p_value <= 0:
                     print(f"Non-positive p-value: {p_value}, setting to smallest positive float")
                     p_value = np.finfo(float).tiny  # Smallest positive float to avoid log10(0)
-                score2 = round(np.log10(p_value))
+                    
+                score2 = round(np.log10(p_value),2)
+                print(f"score: {score} and score2: {score2}")
+                
             except Exception as e:
                 print(f"Error optimizing likelihood for positions {i} and {j}: {e}")
                 continue
 
-            if score <= -10 or score2 <= -10:
+            if score <= -10 or score2 <= -3:
                 s += 1
                 results.append([i, j, tab[0, 0], tab[0, 1], tab[1, 0], tab[1, 1], score, score2])
-                print(f"results appended. Now results: {results}")
+                print(f"results appended for {i} and {j}. New results: {[i, j, tab[0, 0], tab[0, 1], tab[1, 0], tab[1, 1], score, score2]}")
 
 
     print(f"Sorting and saving {len(results)} significant results...")
@@ -283,6 +299,9 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--treefile', required=True, help='Path to the Newick tree file.')
     parser.add_argument('-s', '--sequencefile', required=True, help='Path to the sequence file in FASTA format.')
     parser.add_argument('-o', '--output_dir', required=True, help='Directory to save the output files.')
-
+   
+    # do whatever you do
     args = parser.parse_args()
     main(args.treefile, args.sequencefile, args.output_dir)
+
+        
