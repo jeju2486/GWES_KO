@@ -1,49 +1,19 @@
-sccmec.unitigs (Result from gfa1_parser)
+#GWES with Evolutionary DATA
 
-0 AATGCAACGATTAGAGTCAGCAATCGCAAATAAAGATCAAACTAAAGCGAGCGAAAACTACAT
-1 GCAATGCAACGATTAGAGTCAGCAATCGCAAATAAAGATCAAACTAAAGCGAGCGAAAACTA
-2 AGATGGTGCAATGCAACGATTAGAGTCAGCAATCGCAAATAAAGATCAAACTAAAGCGAGCGAAAAC
+This is the alignment-free pangenome-wise Epistasis Anaylsis which includes the phylogenetic data.
 
-scccmec.edges (Result from gfa1_parser)
+#Input file
+*`unitig.fasta` : output file from the cuttlefish/gfa1_parser. It is the mock fasta file that shows the presence of unitig as 'c' and absence as 'a'.
+*`/unitig_path` : folder that contains the path data of pangenome graph.
+*`name.unitigs` : output ifle from the cuttlefish/gfa1_parser. shows the name/order of unitig and their sequence.
+*`treefile.nwk` : phylogenetic tree file. newick format
 
-0 1 RR 60M
-0 344418 FF 60M
-0 551069 FF 60M
-1 2 RR 60M
-1 935664 RR 60M
-1 979397 FF 60M
-2 3 RR 60M
-3 4 RR 60M
-3 1222149 FF 60M
-4 5 RR 60M
+#Introduction
+1. It reads the input files and apply the treefile to generate the middle node tree sequence.
+2. Read the tree file and allocate unitig presence/absence for each node and leaf of three.
+3. It calcaulte the model performance of null and epistasis CTMC model and perform the Likelihood-ratio test (LRT)
+4. ##Todo-list Build the accurate way to calculate the distance and plot it with LRT result
 
-sccmec.paths (Result from gfa1_parser)
-
-sccmec_paths/1.edges
-sccmec_paths/2.edges
-sccmec_paths/3.edges
-sccmec_paths/4.edges
-sccmec_paths/5.edges
-sccmec_paths/6.edges
-sccmec_paths/7.edges
-sccmec_paths/8.edges
-
-sccmec.counts (Result from gfa1_parser)
-
-1372 2
-1373 2
-1374 2
-1375 2
-1376 2
-1377 2
-1378 2
-
-sccmec.fasta (Result from gfa1_parser)
-
->NZ_CP039162.1
-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+#How to run
+`python ctmc_multi.py -t "tree_file" -s "sequence_file" -o "$output_dir" -n 36`
+(**warning** it is not runable generally now, I will change the code in the earliest convenience)
