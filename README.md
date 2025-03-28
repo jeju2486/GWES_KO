@@ -17,7 +17,6 @@ This repository provides an add-on to **[PAN-GWES](https://github.com/Sudaraka88
 5. [Acknowledgments](#acknowledgments)  
 6. [Contact](#contact)
 
----
 
 ## Overview
 
@@ -27,7 +26,6 @@ This repository provides an add-on to **[PAN-GWES](https://github.com/Sudaraka88
 - Integrate phylogenetic data using a CTMC model.  
 - Leverage the [PAN-GWES](https://github.com/Sudaraka88/PAN-GWES?tab=readme-ov-file) framework with additional steps for reconstructing ancestral states and applying evolutionary models.
 
----
 
 ## Requirements
 
@@ -45,8 +43,6 @@ Before running this workflow, ensure you have installed or can access:
 > - The instructions below assume a Linux environment.  
 > - Future releases may include a conda environment for simpler installation.
 
----
-
 ## Installation
 
 Clone this repository into your local environment:
@@ -55,8 +51,6 @@ Clone this repository into your local environment:
 git clone https://github.com/jeju2486/GWES_KO
 cd GWES_KO
 ```
-
----
 
 ## Usage
 
@@ -197,14 +191,11 @@ Rscript gwes_plot.r cdbg.ud_sgg_0_based
 
 This script interprets `ARACNE == 1` as a direct correlation and `ARACNE == 0` as indirect.
 
----
-
 ## Acknowledgments
 
 - **[Original CTMC code](https://github.com/xavierdidelot/campy/tree/main)** by Xavier Didelot  
 - **[PAN-GWES](https://github.com/Sudaraka88/PAN-GWES?tab=readme-ov-file)** for pangenome-wide epistasis analysis
 
----
 
 ## Contact
 
