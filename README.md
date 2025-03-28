@@ -1,164 +1,155 @@
 # GWES with Evolutionary DATA
 
-This is add-on tool to PAN-GWES by using Continuous Time Markov Chain (CTMC) model.
-This is the alignment-free pangenome-wise Epistasis Anaylsis which includes the phylogenetic data.
+This repository provides an add-on to **[PAN-GWES](https://github.com/Sudaraka88/PAN-GWES?tab=readme-ov-file)**, incorporating a Continuous Time Markov Chain (CTMC) model for alignment-free, pangenome-wide epistasis analysis that integrates phylogenetic data. It references the original [CTMC-model](https://github.com/xavierdidelot/campy/tree/main) by Xavier Didelot.
 
-Please fine the individual repo for more details [PAN-GWES](https://github.com/Sudaraka88/PAN-GWES?tab=readme-ov-file) and original [CTMC-model](https://github.com/xavierdidelot/campy/tree/main)
+## Table of Contents
+
+1. [Overview](#overview)  
+2. [Requirements](#requirements)  
+3. [Installation](#installation)  
+4. [Usage](#usage)  
+   1. [Build the pangenome graph](#1-build-the-pangenome-graph)  
+   2. [Parse the GFA1 output files](#2-parse-the-gfa1-output-files)  
+   3. [ASR with IQ-TREE](#3-ancestral-state-reconstruction-asr-with-iq-tree)  
+   4. [Run SpydrPick and Unitig distance](#4-run-spydrpick-and-unitig-distance-calculations)  
+   5. [Run the CTMC pipeline](#5-run-the-ctmc-pipeline)  
+   6. [Plot the data](#6-plot-the-data)  
+5. [Acknowledgments](#acknowledgments)  
+6. [Contact](#contact)
+
+---
+
+## Overview
+
+**GWES with Evolutionary DATA** is designed to:
+
+- Perform alignment-free pangenome-wide epistasis analysis.  
+- Integrate phylogenetic data using a CTMC model.  
+- Leverage the [PAN-GWES](https://github.com/Sudaraka88/PAN-GWES?tab=readme-ov-file) framework with additional steps for reconstructing ancestral states and applying evolutionary models.
+
+---
 
 ## Requirements
 
-Before using `maskGWAS`, ensure the following software are installed:
+Before running this workflow, ensure you have installed or can access:
 
-1. **[PAN-GWES](https://github.com/Sudaraka88/PAN-GWES?tab=readme-ov-file)** meat-package which includes
-    * **[SpydrPick](https://github.com/santeripuranen/SpydrPick)** (version 1.2.0 or higher)
-    * **[cuttlefish](https://www.cog-genomics.org/plink/1.9/)** (version 2.2.0 or higher)
-    * **[gfa1_parser](https://github.com/jurikuronen/PANGWES/tree/main/gfa1_parser)** 
-2. **[IQ-TREE](https://github.com/iqtree/iqtree2)** (version 2.3.5 or higher)
+1. **[PAN-GWES](https://github.com/Sudaraka88/PAN-GWES?tab=readme-ov-file)**
+   - **[SpydrPick](https://github.com/santeripuranen/SpydrPick)** (≥ v1.2.0)  
+   - **[cuttlefish](https://github.com/COMBINE-lab/cuttlefish)** (≥ v2.2.0)  
+   - **[gfa1_parser](https://github.com/jurikuronen/PANGWES/tree/main/gfa1_parser)**  
+2. **[IQ-TREE](https://github.com/iqtree/iqtree2)** (≥ v2.3.5)  
+3. **Python** (≥ 3.7), including packages:
+   - `numpy`, `scipy`, `biopython`, `matplotlib`, `tqdm`, `numba`
 
-#Can you please make similar as above from below? skip the unimportant parts
+> **Note:**  
+> - The instructions below assume a Linux environment.  
+> - Future releases may include a conda environment for simpler installation.
 
-import argparse
-import csv
-import logging
-import math
-import os
-
-import matplotlib.pyplot as plt  # If you need plotting later
-import numpy as np
-from Bio import Phylo, SeqIO
-from concurrent.futures import ProcessPoolExecutor
-from numba import njit
-from scipy.optimize import minimize
-from scipy.stats import chi2 as chi2_dist
-from tqdm import tqdm
+---
 
 ## Installation
 
-Clone the repository to your local directory:
+Clone this repository into your local environment:
 
-```ruby
+```bash
 git clone https://github.com/jeju2486/GWES_KO
 cd GWES_KO
 ```
-## Input
 
-To run this analysis pipeline you will need:
-- tree file of your isolate
-- folder that contains all your assemblies fasta files
+---
 
 ## Usage
 
-### 1. Build the pangenome graph (coloured de Bruijn graph) 
+Below is a step-by-step example of how to run the pipeline. Adapt file paths, filenames, and parameters to your own data.  
+In these examples, we use **`cdbg`** as the output prefix, but you can choose another as needed.
 
-```ruby
-# Prefix for output files
-input_dir="efcls_assemblies"
-input_prefix="output_asr"
-output_prefix="cdbg"
+### 1. Build the pangenome graph
 
-ls -d "$input_dir"/* > efcls_assemblies.txt
+First, list all assemblies in a file:
 
-cuttlefish build --list efcls_assemblies.txt \
-                --kmer-len 61 \
-                --output "${output_prefix}" \
-                --threads $SLURM_CPUS_PER_TASK \
-                -f 1
+```bash
+ls -d "$input_dir"/* > assemblies_list.txt
 ```
 
-### 2. Parse the gfa1-formatted output files
+Then build the coloured de Bruijn graph (CDBG) with a chosen k-mer length (e.g., `61`):
 
-```ruby
-#This code will parse the gfa1 file generate
-# --cdg_paths: path info of de brujin graph
-# cdbg.counts: count information
-# cdbg.edges: edge info
-# cdbg.fasta: kmer presence(C)/absence(A) fasta file 
-# cdbg.paths: path file info
-# cdbg.unitigs: uniigs sequence info (0-based)
+```bash
+cuttlefish build --list assemblies_list.txt \
+                 --kmer-len 61 \
+                 --output cdbg \
+                 --threads $SLURM_CPUS_PER_TASK \
+                 -f 1
+```
+
+This produces a GFA1-formatted pangenome graph: `cdbg.gfa1`.
+
+### 2. Parse the GFA1 output files
+
+Use **`gfa1_parser`** to generate additional outputs for readability:
+
+```bash
 gfa1_parser cdbg.gfa1 cdbg
 ```
 
-### 3. build the inter node sequences from tree file
+This command produces:
 
-```ruby
-# Input files
-sequence_file="cdbg.fasta"
+- **`cdbg.counts`** – Count information  
+- **`cdbg.edges`** – Edge data of the pangenome graph  
+- **`cdbg.fasta`** – Kmer presence(C)/absence(A) binary FASTA file  
+- **`cdbg.paths`** – Path file info  
+- **`cdbg.unitigs`** – Unitig sequence info (0-based)
 
-# Choose an appropriate substitution model for your data, for example GTR+I+G for DNA.
-MODEL="GTR+I+G"
+### 3. Ancestral State Reconstruction (ASR) with IQ-TREE
 
-# Prefix for output files
-output_prefix="output_asr"
-tree_file="renamed_tree.nwk"
+Run **IQ-TREE** to reconstruct ancestral states. For more models and options, see the [IQ-TREE documentation](https://github.com/iqtree/iqtree2).
 
-# Run IQ-tree with the ancestral state reconstruction option (-asr)
-iqtree -s ${sequence_file} -te ${tree_file} -asr -st DNA -m ${MODEL} -pre ${output_prefix} -nt $SLURM_CPUS_PER_TASK 
-
-# Define input and output files
-state_file="${output_prefix}.state"
-
-echo "Converting IQ tree outputfile to multifasta format"
-
-# Run awk to process the state file and generate the FASTA file
-awk -v output_fasta="${output_prefix}.fasta" '
-BEGIN {
-    FS="\t";
-}
-
-/^#/ { next }  # Skip comment lines
-
-# Skip header line with "Node" in the first field
-$1 == "Node" { next }
-
-{
-    if ($1 != current_node) {
-        if (current_node != "") {
-            print sequence > output_fasta;
-        }
-        current_node = $1;
-        print ">" current_node > output_fasta;
-        sequence = "";
-    }
-    sequence = sequence $3;
-}
-
-END {
-    if (current_node != "") {
-        print sequence > output_fasta;
-    }
-}
-' "$state_file"
-
-echo "Recording the genome sizes"
-
-cat "${output_prefix}.fasta" | awk '/^>/{if (seqname) print seqname "\t" length(seq); seqname=$1; seq=""; next} {seq = seq $0} END {print seqname "\t" length(seq)}' | sed 's/>//; s/ / /' > "$output_prefix"_genome_size.txt
-
-echo "Sorting the output files and removing the temp files"
-
-cat "$sequence_file" "${output_prefix}.fasta" > "${output_prefix}_combined.fasta"
-
-#python split_fasta.py -i "${output_prefix}.fasta" -f efcls_fasta
-
-gzip "$state_file"
+```bash
+iqtree -s cdbg.fasta \
+       -te ${tree_file} \
+       -asr \
+       -st DNA \
+       -m GTR+I+G \
+       -pre output_asr \
+       -nt $SLURM_CPUS_PER_TASK
 ```
 
-### 4. Run the Spydrpick and Unitig distance calculation
+The file `output_asr.state` shows state probabilities for each tree node but is not in FASTA format. Convert it to a multi-FASTA:
 
-```ruby
-sequence_file="cdbg.fasta"
-spydrpick_output="./efcls_spydrpick_output"
-output_dir="./ctmc_efcls_result"
-tree_file="${spydrpick_output}/output_asr.treefile"
+```bash
+awk -v output_fasta="output_asr.fasta" '
+BEGIN { FS="\t"; }
+/^#/ || $1 == "Node" { next }
+{
+   if ($1 != current_node) {
+      if (current_node != "") print sequence > output_fasta;
+      current_node = $1;
+      print ">" current_node > output_fasta;
+      sequence = "";
+   }
+   sequence = sequence $3;
+}
+END { if (current_node != "") print sequence > output_fasta; }
+' "output_asr.state"
+```
 
-mkdir -p "$output_dir" "$spydrpick_output"
+Finally, normalize/uppercase and combine ancestral sequences:
 
-awk '/^>/{print} !/^>/{print toupper($0)}' "$spydrpick_output"/cdbg.fasta > "$spydrpick_output"/cdbg_upper.fasta
+```bash
+awk '/^>/{print} !/^>/{print toupper($0)}' cdbg.fasta > cdbg_upper.fasta
+cat cdbg_upper.fasta output_asr.fasta > output_asr_combined.fasta
+```
 
-cat "$spydrpick_output"/cdbg_upper.fasta "$spydrpick_output"/output_asr.fasta > "$output_dir"/output_asr_combined.fasta
-#output format: pos1 pos2 genome_distance ARACNE MI
-SpydrPick --alignmentfile "$output_dir"/output_asr_combined.fasta --maf-threshold 0.05 --mi-values 50000000 --threads $SLURM_CPUS_PER_TASK --verbose
+### 4. Run SpydrPick and Unitig distance calculations
 
-##output format v w distance (flag) (score) (count) (M2) (min_distance) (max_distance)
+Identify couplings (e.g., correlated variations) with **SpydrPick** and compute distances with **unitig_distance**. The `k-mer-length` should match what you used in **cuttlefish**.
+
+```bash
+SpydrPick --alignmentfile output_asr_combined.fasta \
+          --maf-threshold 0.05 \
+          --mi-values 50000000 \
+          --threads $SLURM_CPUS_PER_TASK \
+          --verbose
+
 unitig_distance --unitigs-file cdbg.unitigs \
                 --edges-file cdbg.edges \
                 --k-mer-length 61 \
@@ -171,18 +162,50 @@ unitig_distance --unitigs-file cdbg.unitigs \
                 --verbose
 ```
 
-### 5. Run the CTMC
+The key output from `unitig_distance` is `cdbg.ud_sgg_0_based`, which typically has columns:
 
-```ruby
-python ctmc_multi.py -t "$tree_file" \
-                    -s "$output_dir"/output_asr_combined.fasta \
-                    -p "$spydrpick_output"/cdbg.ud_sgg_0_based \
-                    -o "$output_dir" \
-                    -n $SLURM_CPUS_PER_TASK 
+```
+unitig_i  unitig_j  distance  ARACNE  MI  count  M2  min_distance  max_distance
 ```
 
-### 6. Plot the data
+### 5. Run the CTMC pipeline
 
-```ruby
+Apply the CTMC model to the results:
+
+```bash
+python ctmc_multi.py -t "$tree_file" \
+                     -s output_asr_combined.fasta \
+                     -p cdbg.ud_sgg_0_based \
+                     -o "$output_dir" \
+                     -n $SLURM_CPUS_PER_TASK
+```
+
+The resultant output typically includes:
+
+```
+unitig_i  unitig_j  distance  ARACNE  MI  count  M2  ...
+...       LRT_p-value  -log_10_LRT_p-value
+```
+
+### 6. Plot the data (Optional)
+
+Use your preferred plotting environment. For example, in R:
+
+```bash
 Rscript gwes_plot.r cdbg.ud_sgg_0_based
 ```
+
+This script interprets `ARACNE == 1` as a direct correlation and `ARACNE == 0` as indirect.
+
+---
+
+## Acknowledgments
+
+- **[Original CTMC code](https://github.com/xavierdidelot/campy/tree/main)** by Xavier Didelot  
+- **[PAN-GWES](https://github.com/Sudaraka88/PAN-GWES?tab=readme-ov-file)** for pangenome-wide epistasis analysis
+
+---
+
+## Contact
+
+For questions, bug reports, or troubleshooting, please open an issue in this repository or contact the repository owner.
